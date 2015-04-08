@@ -1,2 +1,3 @@
 # fda
-Experiments with functional data analysis methods
+
+A Clojure library designed to analise functional data.
