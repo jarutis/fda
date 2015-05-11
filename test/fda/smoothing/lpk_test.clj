@@ -54,16 +54,27 @@
    0.334956 0.474064 0.753487 1.111864 1.544724 2.039343 2.519843 2.878568
    3.016537 2.967017 2.871099 2.856362 2.954654 3.035915 2.773713 1.854062])
 
+(facts "about scaled difference"
+  (m/to-nested-vectors (scaled-diff [3 4 5][1 2 3] 2)) =>
+  (just (map roughly [1 1 1])))
+
+(facts "about local taylor expansion"
+  (m/to-nested-vectors (taylor-series [1 2] 2)) =>
+  (just (map just (m/emap roughly [[1 1 1][1 2 4]]))))
+
 (facts "about bandwidth selection for LPK smoother"
   (select-bandwidth non-progesterone1 :degree 2) => (roughly 1.307))
 
 (facts "about reconstructing smooth curves"
   (fact "smooth data with 0.32 bandwidth is the same as in figure 2.1"
-    (fit non-progesterone1 :bandwidth 0.32) => (just (map roughly example21-fit032)))
+    (:y-estimate (meta (fit non-progesterone1 :bandwidth 0.32))) =>
+    (just (map roughly example21-fit032)))
   (fact "smooth data with 1.30 bandwidth is the same as in figure 2.1"
-    (fit non-progesterone1 :bandwidth 1.307) => (just (map roughly example21-fit130)))
+    (:y-estimate (meta (fit non-progesterone1 :bandwidth 1.307))) =>
+    (just (map roughly example21-fit130)))
   (fact "smooth data with 5.20 bandwidth is the same as in figure 2.1"
-    (fit non-progesterone1 :bandwidth 5.22) => (just (map roughly example21-fit522))))
+    (:y-estimate (meta (fit non-progesterone1 :bandwidth 5.22))) =>
+    (just (map roughly example21-fit522))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Example 2.2
@@ -77,16 +88,16 @@
    0.042007 0.045031 0.048253 0.051581 0.054930 0.058238])
 
 (fact "candidates for bandwidth selection match"
-  (m/to-nested-vectors
-   (generate-bandwidths non-progesterone1 (count non-progesterone1))) =>
+  (m/to-nested-vectors (generate-bandwidths non-progesterone1)) =>
   (just (map roughly example22-h)))
 
 (fact "GCV matches example 2.2"
   (let [gcv (fn [bandwidth]
               (let [[x y] (m/slices non-progesterone1 1)
-                    smoother (smoother-matrix x bandwidth 2 (:gaussian kernels))
-                    y-estimate (m/mmul smoother y)
-                    dof (m/trace smoother)]
+                    smoother-fn (smoother x 2 (:gaussian kernels))
+                    smoother-matrix (m/matrix (map #(smoother-fn % bandwidth) x))
+                    y-estimate (m/mmul smoother-matrix y)
+                    dof (m/trace smoother-matrix)]
                 (/ (utils/gcv y y-estimate dof) (count non-progesterone1))))]
     (map gcv example22-h)) => (just (map roughly example22-gcv)))
 
@@ -142,18 +153,13 @@
    [-0.036614 -0.229442 -0.259595 -0.266158]])
 
 (fact "lpk fit matches example 2.3"
-  (fit non-progesterone20) => (just (map roughly (m/get-column example23-iterations 0))))
+  (:y-estimate (meta (fit non-progesterone20))) =>
+  (just (map roughly (m/get-column example23-iterations 0))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Example 2.4
 
 (facts "about outlier adjustmens"
   (fact "first iteration matches example 2.4"
-    (:fit-at-x (robust-fit non-progesterone20 :degree 2 :iterations 1)) =>
-    (just (map roughly (m/get-column example23-iterations 1))))
-  (fact "second iteration matches example 2.4"
-    (:fit-at-x (robust-fit non-progesterone20 :degree 2 :iterations 2)) =>
-    (just (map roughly (m/get-column example23-iterations 2))))
-  (fact "third iteration matches example 2.4"
-    (:fit-at-x (robust-fit non-progesterone20 :degree 2 :iterations 3)) =>
-    (just (map roughly (m/get-column example23-iterations 3)))))
+    (:y-estimate (meta (fit non-progesterone20 :iterations 1))) =>
+    (just (map roughly (m/get-column example23-iterations 1)))))

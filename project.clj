@@ -12,6 +12,6 @@
                  [net.mikera/core.matrix.stats "0.5.0"]
                  [net.mikera/vectorz-clj "0.29.0"]
                  [com.taoensso/timbre "3.4.0"]
-                 [clatrix "0.4.0"]
+                 [incanter "1.9.0"]
                  [net.sourceforge.jmatio/jmatio "1.0"]]
   :profiles {:dev {:dependencies [[midje "1.6.3"]]}})

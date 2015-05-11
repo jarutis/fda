@@ -14,7 +14,7 @@
   "Creates a sequence of equaly spaced numbers from *xmin* to *xmax* with count
   specified in *steps*."
   [xmin xmax steps]
-  (m/add xmin (m/mul (- xmax xmin) (m/div (m/array (range steps)) (dec steps)))))
+  (m/add xmin (m/mul (- xmax xmin) (m/div (range steps) (dec steps)))))
 
 (defn logspace
   "Creates a sequence of logarithmicaly spaced numbers from *xmin* to *xmax* with
