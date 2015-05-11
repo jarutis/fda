@@ -63,7 +63,7 @@
   (just (map just (m/emap roughly [[1 1 1][1 2 4]]))))
 
 (facts "about bandwidth selection for LPK smoother"
-  (select-bandwidth non-progesterone1 :degree 2) => (roughly 1.307))
+  (:best (select-bandwidth non-progesterone1)) => (roughly 1.307))
 
 (facts "about reconstructing smooth curves"
   (fact "smooth data with 0.32 bandwidth is the same as in figure 2.1"
@@ -92,14 +92,7 @@
   (just (map roughly example22-h)))
 
 (fact "GCV matches example 2.2"
-  (let [gcv (fn [bandwidth]
-              (let [[x y] (m/slices non-progesterone1 1)
-                    smoother-fn (smoother x 2 (:gaussian kernels))
-                    smoother-matrix (m/matrix (map #(smoother-fn % bandwidth) x))
-                    y-estimate (m/mmul smoother-matrix y)
-                    dof (m/trace smoother-matrix)]
-                (/ (utils/gcv y y-estimate dof) (count non-progesterone1))))]
-    (map gcv example22-h)) => (just (map roughly example22-gcv)))
+  (:gcv (select-bandwidth non-progesterone1)) => (just (map roughly example22-gcv)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Example 2.3

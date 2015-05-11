@@ -61,17 +61,18 @@
                     smoother-matrix (m/matrix (map #(smoother-fn % bandwidth) x))
                     y-estimate (m/mmul smoother-matrix y)
                     dof (m/trace smoother-matrix)]
-                (utils/gcv y y-estimate dof)))
+                (m/div (utils/gcv y y-estimate dof) (count y))))
         mean-gcv (fn [bandwidth] (s/mean (map #(gcv % bandwidth) data)))
-        gcv-values (pmap mean-gcv bandwidths)]
-    (val (apply min-key key (zipmap gcv-values bandwidths)))))
+        gcv-values (pmap mean-gcv bandwidths)
+        best-bandwidth (val (apply min-key key (zipmap gcv-values bandwidths)))]
+    {:best best-bandwidth :bandwidths bandwidths :gcv gcv-values}))
 
 (defn adjust-outliers
   "Reconstruct smooth function and adjust data for outliers by substituting
   outlier elements with estimated values"
   [data degree kernel iterations]
   (let [[x y] (m/slices data 1)
-        bandwidth (select-bandwidth data :degree degree :kernel kernel)
+        bandwidth (:best (select-bandwidth data :degree degree :kernel kernel))
         smoother-fn #((smoother x degree kernel) % bandwidth)
         smoother-matrix (m/array (map smoother-fn x))]
     (loop [y-new [y] iteration iterations]
@@ -95,7 +96,9 @@
                           [y])
         y-adjusted (last y-adjustments)
         adjusted-data (m/transpose [x y-adjusted])
-        bandwidth (or bandwidth (select-bandwidth adjusted-data :degree degree :kernel kernel))
+        bandwidths (if (nil? bandwidth)
+                     (select-bandwidth adjusted-data :degree degree :kernel kernel))
+        bandwidth (or bandwidth (:best bandwidths))
         smoother-fn #((smoother x degree kernel) % bandwidth)
         smoother-matrix (m/array (map smoother-fn x))
         y-estimate (m/mmul smoother-matrix y-adjusted)]
@@ -104,5 +107,6 @@
        :y y
        :y-estimate (m/to-nested-vectors y-estimate)
        :y-adjustments y-adjustments
+       :bandwidths bandwidths
        :significance (significance y y-estimate smoother-matrix level)})))
 
