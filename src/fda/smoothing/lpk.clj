@@ -2,7 +2,8 @@
   (:require [clojure.core.matrix :as m]
             [clojure.core.matrix.stats :as s]
             [clojure.core.reducers :as r]
-            [fda.utils :as utils]))
+            [fda.utils :as utils])
+  (:gen-class :name fda.smoothing.Lpk))
 
 (def kernels {:uniform (fn [x] (m/add (m/mul x 0) 1/2))
               :gaussian (fn [x] (m/div (m/exp (m/mul -0.5 (m/pow x 2)))
@@ -40,32 +41,42 @@
 (defn significance
   "Calculates significance level at design points."
   [y y-estimate smoother-matrix level]
-  (let [quantile (utils/normal-quantile (- 1 (/ level 2)))
+  (let [score (utils/z-score level)
         hsig2 (m/div (utils/sse y y-estimate)
                      (m/sub (count y) (m/trace smoother-matrix)))
-        uysig (->> (m/mmul smoother-matrix (m/transpose smoother-matrix))
-                   (m/diagonal)
-                   (m/mul hsig2)
-                   (m/sqrt))]
-    {:lower (m/to-nested-vectors (m/add y-estimate (m/mul quantile uysig)))
-     :upper (m/to-nested-vectors (m/sub y-estimate (m/mul quantile uysig)))}))
+        se (-> smoother-matrix
+               (m/mmul (m/transpose smoother-matrix))
+               (m/diagonal)
+               (m/mul hsig2)
+               (m/sqrt)
+               (m/to-nested-vectors))]
+    {:level level
+     :se se
+     :lower (m/add y-estimate (m/mul score se))
+     :upper (m/sub y-estimate (m/mul score se))}))
 
-(defn select-bandwidth
-  "Selects the best bandwitdh for a set of curves based on GCV rule."
+(defn gcv
+  [data bandwidth degree kernel]
+  (let [[x y] (m/slices data 1)
+        smoother-fn (smoother x degree kernel)
+        smoother-matrix (m/matrix (map #(smoother-fn % bandwidth) x))
+        y-estimate (m/mmul smoother-matrix y)
+        dof (m/trace smoother-matrix)]
+    (m/div (utils/gcv y y-estimate dof) (count y))))
+
+(defn bandwidths
+  "Selects a set possible bandwidths and calculates corresponding GCV values"
   [data & {:keys [degree kernel] :or {degree 2 kernel (:gaussian kernels)}}]
   (let [data (if (= (m/dimensionality data) 2) [data] data)
         bandwidths (generate-bandwidths (first (concat data)))
-        gcv (fn [data bandwidth]
-              (let [[x y] (m/slices data 1)
-                    smoother-fn (smoother x degree kernel)
-                    smoother-matrix (m/matrix (map #(smoother-fn % bandwidth) x))
-                    y-estimate (m/mmul smoother-matrix y)
-                    dof (m/trace smoother-matrix)]
-                (m/div (utils/gcv y y-estimate dof) (count y))))
-        mean-gcv (fn [bandwidth] (s/mean (map #(gcv % bandwidth) data)))
-        gcv-values (pmap mean-gcv bandwidths)
-        best-bandwidth (val (apply min-key key (zipmap gcv-values bandwidths)))]
-    {:best best-bandwidth :bandwidths bandwidths :gcv gcv-values}))
+        gcv #(gcv %1 %2 degree kernel)
+        mean-gcv (fn [bandwidth] (s/mean (map #(gcv % bandwidth) data)))]
+    {:bandwidths bandwidths
+     :gcv (pmap mean-gcv bandwidths)}))
+
+(defn select-bandwidth
+  [bandwidths]
+  (:bandwidth (reduce (fn [b1 b2] (if (< (:gcv b1) (:gcv b2)) b1 b2)))))
 
 (defn adjust-outliers
   "Reconstruct smooth function and adjust data for outliers by substituting
@@ -90,23 +101,24 @@
              :or {degree 2
                   kernel (:gaussian kernels)
                   level 0.05}}]
-  (let [[x y] (m/slices data 1)
-        quantile (utils/normal-quantile (- 1 (/ level 2)))
-        y-adjustments (if iterations (adjust-outliers data degree kernel iterations)
-                          [y])
-        y-adjusted (last y-adjustments)
-        adjusted-data (m/transpose [x y-adjusted])
-        bandwidths (if (nil? bandwidth)
-                     (select-bandwidth adjusted-data :degree degree :kernel kernel))
-        bandwidth (or bandwidth (:best bandwidths))
-        smoother-fn #((smoother x degree kernel) % bandwidth)
+  (let [y-adjustments (adjust-outliers data degree kernel iterations)
+        adjusted-data (m/transpose [(m/get-column data 0) (last y-adjustments)])
+        [x y] (m/slices adjusted-data 1)
+        bandwidths (if bandwidth {:bandwidths bandwidth
+                                  :gcv (gcv data bandwidth degree kernel)}
+                       (bandwidths adjusted-data :degree degree :kernel kernel))
+        best-bandwidth (select-bandwidth bandwidths)
+        smoother-fn #((smoother x degree kernel) % best-bandwidth)
         smoother-matrix (m/array (map smoother-fn x))
-        y-estimate (m/mmul smoother-matrix y-adjusted)]
-    (with-meta (fn [t] (m/mget (m/mmul (m/array (smoother-fn t)) y-adjusted)))
+        y-estimate (m/mmul smoother-matrix y)]
+    (with-meta (fn [t] (m/mget (m/mmul (m/array (smoother-fn t)) y)))
       {:x x
-       :y y
+       :y (m/get-column data 1)
        :y-estimate (m/to-nested-vectors y-estimate)
-       :y-adjustments y-adjustments
+       :degree degree
+       :kernel kernel
+       :selected-bandwidth best-bandwidth
        :bandwidths bandwidths
+       :y-adjustments y-adjustments
        :significance (significance y y-estimate smoother-matrix level)})))
 

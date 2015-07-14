@@ -63,7 +63,7 @@
   (just (map just (m/emap roughly [[1 1 1][1 2 4]]))))
 
 (facts "about bandwidth selection for LPK smoother"
-  (:best (select-bandwidth non-progesterone1)) => (roughly 1.307))
+  (:selected (select-bandwidth non-progesterone1)) => (roughly 1.307))
 
 (facts "about reconstructing smooth curves"
   (fact "smooth data with 0.32 bandwidth is the same as in figure 2.1"

@@ -2,18 +2,18 @@
   (:require [clojure.core.matrix :as m]
             [clojure.core.matrix.stats :as s]
             [clojure.core.matrix.linear :as ml]
-            [fda.utils :refer :all]))
+            [fda.utils :as utils]))
 
 
 (defn knot-positions
   "Calculates knot positions for regression spline smoother"
-  [x number-of-knots & {:keys [type] :or {type :uniform}}]
+  [x knot-count & {:keys [type] :or {type :uniform}}]
   (condp = type
-    :uniform (m/array (rest (drop-last (linspace (m/emin x)
-                                                 (m/emax x)
-                                                 (+ number-of-knots 2)))))
-    :quantile (m/array (quantile x :probs (m/div (range 1 (inc number-of-knots))
-                                                 (inc number-of-knots))))))
+    :uniform (m/array (rest (drop-last (utils/linspace (m/emin x)
+                                                       (m/emax x)
+                                                       (+ knot-count 2)))))
+    :quantile (m/array (utils/quantile x :probs (m/div (range 1 (inc knot-count))
+                                                       (inc knot-count))))))
 
 (defn truncated-power-basis
   [degree & {:keys [knots] :or {knots []}}]
@@ -23,57 +23,80 @@
           truncated-part (m/emap #(m/pow (zero-or-more (- x %)) degree) knots)]
       (m/join power-part truncated-part))))
 
-(defn knot-numbers
+(defn- max-knots
   [data]
-  (let [max-number (min 50 (/ (m/row-count data) 2))]
-    (range (inc (Math/floor max-number)))))
+  (Math/floor (min 50 (/ (m/row-count data) 2))))
 
-(declare fit)
-(defn select-knot-number
+(defn- rs-fit
+  [data degree knot-count knot-spacing]
+  (let [[x y] (m/slices data 1)
+        knots (knot-positions x knot-count :type knot-spacing)
+        series-fn (truncated-power-basis degree :knots knots)
+        series (m/emap series-fn x)
+        ls-fit (ml/least-squares (m/matrix series) y)]
+    (with-meta (m/mmul series ls-fit)
+      {:ls-fit ls-fit
+       :fn series-fn
+       :series series})))
+
+(defn gcv
+  [data degree knot-count knot-spacing]
+  (let [y-estimate (rs-fit data degree knot-count knot-spacing)
+        y (m/get-column data 1)]
+    (utils/gcv y y-estimate (+ knot-count degree 1))))
+
+(defn knot-counts
   "Selects optimal number of knots"
   [data degree knot-spacing]
   (let [[x y] (m/slices data 1)
-        knot-numbers (knot-numbers data)
-        y-estimate (fn [n] (fit data :degree degree :number-of-knots n
-                                     :knot-spacing knot-spacing))
-        gcv (pmap #(gcv y (y-estimate %) (+ % degree 1)) knot-numbers)]
-    (val (apply min-key key (zipmap gcv knot-numbers)))))
+        data (if (= (m/dimensionality data) 2) [data] data)
+        knot-counts (range (inc (m/emax (map max-knots data))))
+        gcv #(gcv %1 %2 degree knot-spacing)
+        mean-gcv (fn [knot-count] (s/mean (map #(gcv % knot-count) data)))]
+    {:knot-count knot-counts
+     :gcv (map mean-gcv knot-counts)}))
+
+(defn select-knot-count
+  [knot-counts]
+  (:knot-count (reduce (fn [b1 b2] (if (< (:gcv b1) (:gcv b2)) b1 b2))
+                       knot-counts)))
 
 (defn significance
-  [data & {:keys [degree knot-spacing number-of-knots level]
-           :or {degree 2
-                knot-spacing :uniform
-                level 0.05}}]
-  (let [[x y] (m/slices data 1)
-        z-score (normal-quantile (- 1 (/ level 2)))
-        number-of-knots (or number-of-knots (select-knot-number data degree knot-spacing))
-        knots (knot-positions x number-of-knots :type knot-spacing)
-        series-fn (truncated-power-basis degree :knots knots)
-        series (m/array (map series-fn x))
-        least-squares-fit (least-squares-estimator series)
-        y-estimate (m/to-nested-vectors (m/mmul series least-squares-fit y))
-        ser2 (ser2 y y-estimate (+ 1 number-of-knots degree))
+  [y y-estimate series least-squares-fit dof level]
+  (let [score (utils/z-score level)
+        ser2 (utils/ser2 y y-estimate dof)
         se (-> series
                (m/mmul least-squares-fit)
                (m/diagonal)
                (m/mul ser2)
                (m/sqrt)
                (m/to-nested-vectors))]
-    {:fit y-estimate
+    {:level level
      :se se
-     :sig-lower (m/sub y-estimate (m/mul z-score se))
-     :sig-upper (m/add y-estimate (m/mul z-score se))}))
+     :sig-lower (m/sub y-estimate (m/mul score se))
+     :sig-upper (m/add y-estimate (m/mul score se))}))
 
 (defn fit
   "Regression spline smoother"
-  [data & {:keys [t degree knot-spacing number-of-knots]
+  [data & {:keys [degree knot-spacing knot-count iterations level]
            :or {degree 2
-                knot-spacing :uniform}}]
+                knot-spacing :uniform
+                level 0.05}}]
   (let [[x y] (m/slices data 1)
-        number-of-knots (or number-of-knots (select-knot-number data degree knot-spacing))
-        knots (knot-positions x number-of-knots :type knot-spacing)
-        series-fn (truncated-power-basis degree :knots knots)
-        series (m/emap series-fn x)
-        t-series (if t (m/emap series-fn t) series)
-        least-squares-fit (ml/least-squares (m/matrix series) y)]
-    (m/mmul t-series least-squares-fit)))
+        knot-counts (if knot-count [{:knot-count knot-count
+                                     :gcv (gcv data knot-count degree knot-spacing)}]
+                        (knot-counts data degree knot-spacing))
+        best-knot-count (select-knot-count knot-counts)
+        y-estimate (rs-fit data degree best-knot-count knot-spacing)
+        {ls-fit :ls-fit series-fn :fn series :series} (meta y-estimate)
+        dof (+ 1 best-knot-count degree)]
+    (with-meta (fn [t] (m/mget (m/mmul (series-fn t) ls-fit)))
+      {:x x
+       :y y
+       :degree degree
+       :knot-spacing knot-spacing
+       :knot-counts knot-count
+       :selected-knot-count best-knot-count
+       :y-estimate (m/to-nested-vectors y-estimate)
+       :y-adjustments 0
+       :significance (significance y y-estimate series ls-fit dof level)})))

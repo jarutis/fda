@@ -3,7 +3,8 @@
                                                            Percentile$EstimationType)
            (org.apache.commons.math3.special Erf))
   (:require [clojure.core.matrix :as m]
-            [clojure.core.matrix.stats :as s]))
+            [clojure.core.matrix.stats :as s])
+  (:gen-class))
 
 (defn diff
   "Calculates lagged difference of specified order"
@@ -72,3 +73,8 @@
   "Quantile of normal distribution"
   [x]
   (* (m/sqrt 2) (Erf/erfInv (- (* 2 x) 1))))
+
+(defn z-score
+  "Z-score based on confidence level"
+  [level]
+  (normal-quantile (- 1 (/ level 2))))
